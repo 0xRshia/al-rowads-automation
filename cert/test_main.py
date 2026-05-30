@@ -192,6 +192,40 @@ class CertificateGeneratorTests(unittest.TestCase):
             self.assertEqual([pdf.name for pdf in pdfs], ["علی.pdf", "Sara.pdf"])
             self.assertTrue(all(pdf.stat().st_size > 0 for pdf in pdfs))
 
+    def test_fast_pdf_baseline_uses_visual_glyph_bounds(self):
+        font = Path("data/fonts/AbarHigh-SemiBold.ttf")
+        if not font.exists():
+            self.skipTest("Default runtime certificate font is not available")
+
+        from arabic_reshaper import reshape
+        from bidi.algorithm import get_display
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        font_name = "certificate-center-test-font"
+        if font_name not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont(font_name, str(font)))
+
+        content_bottom = 100
+        content_height = 60
+        font_size = 36
+        text = get_display(reshape("علی احمدی"))
+        centered_baseline = certificates._centered_text_baseline_y(
+            content_bottom=content_bottom,
+            content_height=content_height,
+            text=text,
+            font_path=font,
+            font_size=font_size,
+            font_name=font_name,
+            pdfmetrics=pdfmetrics,
+        )
+        ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
+        font_metric_baseline = (
+            content_bottom + (content_height / 2) - ((ascent + descent) / 2)
+        )
+
+        self.assertLess(centered_baseline, font_metric_baseline)
+
     def test_font_verification_uses_uploaded_font_family_name(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             copied_font = Path(temporary_directory) / "uploaded.ttf"

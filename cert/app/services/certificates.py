@@ -22,6 +22,9 @@ FONT_CACHE_TIMEOUT_SECONDS = 30
 FONT_MATCH_TIMEOUT_SECONDS = 15
 EMU_PER_POINT = 12700
 TWIPS_PER_POINT = 20
+TEXT_MEASUREMENT_SCALE = 4
+TEXT_RENDERING_CENTER_CORRECTION_POINTS = -1.0
+BACKGROUND_BOX_DETECTION_PADDING_POINTS = 20
 
 XML_NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -294,6 +297,7 @@ def _generate_fast_pdf_certificates(
                 output_pdf=temporary_pdf,
                 image=image,
                 template=template,
+                font_path=font_path,
                 font_name=font_name,
                 text=shaped_name,
                 pdfmetrics=pdfmetrics,
@@ -312,6 +316,7 @@ def _write_fast_pdf(
     output_pdf: Path,
     image,
     template: FastPdfTemplate,
+    font_path: Path,
     font_name: str,
     text: str,
     pdfmetrics,
@@ -334,20 +339,66 @@ def _write_fast_pdf(
     content_height = template.textbox_height - template.inset_top - template.inset_bottom
     font_size = _fit_text_size(text, font_name, template.font_size, content_width, pdfmetrics)
 
-    ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
-    text_height = ascent - descent
     content_bottom = (
         template.page_height
         - template.textbox_y
         - template.textbox_height
         + template.inset_bottom
     )
-    baseline_y = content_bottom + ((content_height - text_height) / 2) - descent
+    baseline_y = _centered_text_baseline_y(
+        content_bottom=content_bottom,
+        content_height=content_height,
+        text=text,
+        font_path=font_path,
+        font_size=font_size,
+        font_name=font_name,
+        pdfmetrics=pdfmetrics,
+    )
 
     pdf.setFont(font_name, font_size)
     pdf.drawCentredString(content_x + (content_width / 2), baseline_y, text)
     pdf.showPage()
     pdf.save()
+
+
+def _centered_text_baseline_y(
+    content_bottom: float,
+    content_height: float,
+    text: str,
+    font_path: Path,
+    font_size: float,
+    font_name: str,
+    pdfmetrics,
+) -> float:
+    content_center_y = content_bottom + (content_height / 2)
+    return content_center_y + _text_baseline_offset_from_center(
+        text=text,
+        font_path=font_path,
+        font_size=font_size,
+        font_name=font_name,
+        pdfmetrics=pdfmetrics,
+    )
+
+
+def _text_baseline_offset_from_center(
+    text: str,
+    font_path: Path,
+    font_size: float,
+    font_name: str,
+    pdfmetrics,
+) -> float:
+    try:
+        from PIL import ImageFont
+
+        measured_size = max(1, round(font_size * TEXT_MEASUREMENT_SCALE))
+        font = ImageFont.truetype(str(font_path), measured_size)
+        _left, top, _right, bottom = font.getbbox(text, anchor="ls")
+        return (
+            ((top + bottom) / 2) / TEXT_MEASUREMENT_SCALE
+        ) + TEXT_RENDERING_CENTER_CORRECTION_POINTS
+    except Exception:
+        ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
+        return -((ascent + descent) / 2)
 
 
 def _fit_text_size(
@@ -388,6 +439,17 @@ def _load_fast_pdf_template(template_path: Path, placeholder: str) -> FastPdfTem
                 margin_offset=margin_top,
             )
             textbox_width, textbox_height = _read_anchor_extent(text_anchor)
+            visual_textbox = _detect_background_textbox(
+                background_image=background_image,
+                page_width=page_width,
+                page_height=page_height,
+                textbox_x=textbox_x,
+                textbox_y=textbox_y,
+                textbox_width=textbox_width,
+                textbox_height=textbox_height,
+            )
+            if visual_textbox is not None:
+                textbox_x, textbox_y, textbox_width, textbox_height = visual_textbox
             inset_left, inset_top, inset_right, inset_bottom = _read_textbox_insets(text_anchor)
             font_size = _read_placeholder_font_size(text_anchor, placeholder)
     except (KeyError, ElementTree.ParseError, zipfile.BadZipFile):
@@ -417,6 +479,78 @@ def _find_placeholder_anchor(document_root: ElementTree.Element, placeholder: st
         if placeholder in "".join(anchor.itertext()):
             return anchor
     return None
+
+
+def _detect_background_textbox(
+    background_image: bytes,
+    page_width: float,
+    page_height: float,
+    textbox_x: float,
+    textbox_y: float,
+    textbox_width: float,
+    textbox_height: float,
+) -> tuple[float, float, float, float] | None:
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(background_image)) as image:
+            image = image.convert("RGB")
+            image_width = image.width
+            image_height = image.height
+            padding = BACKGROUND_BOX_DETECTION_PADDING_POINTS
+            left = _points_to_pixels(max(textbox_x - padding, 0), page_width, image_width)
+            top = _points_to_pixels(max(textbox_y - padding, 0), page_height, image_height)
+            right = _points_to_pixels(
+                min(textbox_x + textbox_width + padding, page_width),
+                page_width,
+                image_width,
+            )
+            bottom = _points_to_pixels(
+                min(textbox_y + textbox_height + padding, page_height),
+                page_height,
+                image_height,
+            )
+            orange_pixels: list[tuple[int, int]] = []
+
+            for y in range(top, bottom):
+                for x in range(left, right):
+                    if _is_name_box_orange(image.getpixel((x, y))):
+                        orange_pixels.append((x, y))
+    except Exception:
+        return None
+
+    if len(orange_pixels) < 100:
+        return None
+
+    min_x = min(x for x, _y in orange_pixels)
+    max_x = max(x for x, _y in orange_pixels)
+    min_y = min(y for _x, y in orange_pixels)
+    max_y = max(y for _x, y in orange_pixels)
+    detected_x = _pixels_to_points(min_x, image_width, page_width)
+    detected_y = _pixels_to_points(min_y, image_height, page_height)
+    detected_width = _pixels_to_points(max_x - min_x + 1, image_width, page_width)
+    detected_height = _pixels_to_points(max_y - min_y + 1, image_height, page_height)
+
+    if not (
+        textbox_width * 0.7 <= detected_width <= textbox_width * 1.3
+        and textbox_height * 0.7 <= detected_height <= textbox_height * 1.3
+    ):
+        return None
+
+    return detected_x, detected_y, detected_width, detected_height
+
+
+def _is_name_box_orange(pixel: tuple[int, int, int]) -> bool:
+    red, green, blue = pixel
+    return red > 220 and 55 < green < 150 and blue < 70
+
+
+def _points_to_pixels(points: float, page_points: float, image_pixels: int) -> int:
+    return max(0, min(round((points / page_points) * image_pixels), image_pixels))
+
+
+def _pixels_to_points(pixels: int, image_pixels: int, page_points: float) -> float:
+    return (pixels / image_pixels) * page_points
 
 
 def _read_page_size(document_root: ElementTree.Element) -> tuple[float, float]:
