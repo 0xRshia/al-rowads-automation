@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  HR_ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  fullName           String
+  email              String              @unique
+  username           String              @unique
+  passwordHash       String
+  role               UserRole            @default(EMPLOYEE)
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  lastLoginAt        DateTime?
+  deletedAt          DateTime?
+  accountPermissions AccountPermission[]
+  auditLogs          AuditLog[]          @relation("ActorAuditLogs")
+
+  @@index([role])
+  @@index([isActive, deletedAt])
+}
+
+model SharedAccount {
+  id                 String              @id @default(cuid())
+  serviceName        String
+  accountLabel       String
+  loginEmail         String
+  notes              String?
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  archivedAt         DateTime?
+  totpSecret         TotpSecret?
+  accountPermissions AccountPermission[]
+  auditLogs          AuditLog[]
+
+  @@index([isActive, archivedAt])
+}
+
+model TotpSecret {
+  id              String        @id @default(cuid())
+  sharedAccountId String        @unique
+  encryptedSecret String
+  iv              String
+  authTag         String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sharedAccount   SharedAccount @relation(fields: [sharedAccountId], references: [id], onDelete: Cascade)
+}
+
+model AccountPermission {
+  id              String        @id @default(cuid())
+  userId          String
+  sharedAccountId String
+  canViewCode     Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sharedAccount   SharedAccount @relation(fields: [sharedAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sharedAccountId])
+  @@index([sharedAccountId])
+}
+
+model AuditLog {
+  id              String         @id @default(cuid())
+  actorId         String?
+  sharedAccountId String?
+  targetUserId    String?
+  action          String
+  ipAddress       String?
+  userAgent       String?
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  actor           User?          @relation("ActorAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  sharedAccount   SharedAccount? @relation(fields: [sharedAccountId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([sharedAccountId])
+}

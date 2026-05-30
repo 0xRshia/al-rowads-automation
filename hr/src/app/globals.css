@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background: #f6f7f9;
+  color: #18202f;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.form-input {
+  width: 100%;
+  border: 1px solid #cdd5df;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0.6rem 0.7rem;
+}
+
+.btn {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 0.45rem 0.8rem;
+  font-weight: 700;
+}
+
+.btn-primary {
+  background: #195a9a;
+  color: #ffffff;
+}
+
+.btn-secondary {
+  border: 1px solid #cdd5df;
+  background: #ffffff;
+  color: #18202f;
+}
+
+.btn-danger {
+  background: #b42318;
+  color: #ffffff;
+}
+
+.panel {
+  border: 1px solid #d9e0e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
