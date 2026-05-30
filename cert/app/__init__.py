@@ -1,0 +1,1 @@
+"""Certificate generator FastAPI application."""
