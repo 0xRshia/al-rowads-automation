@@ -10,21 +10,35 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 from app.config import DEFAULT_PLACEHOLDER
 
 
 DOCUMENT_XML = "word/document.xml"
+WORD_TEXT_PART_PATTERN = re.compile(
+    r"^word/(?:document|header\d+|footer\d+|footnotes|endnotes|comments)\.xml$"
+)
+WORD_PARAGRAPH_PATTERN = re.compile(r"<w:p\b.*?</w:p>", re.DOTALL)
+WORD_RUN_PATTERN = re.compile(r"<w:r\b[^>]*>.*?</w:r>", re.DOTALL)
+WORD_TEXT_PATTERN = re.compile(r"(<w:t\b[^>]*>)(.*?)(</w:t>)", re.DOTALL)
+RTL_TEXT_PATTERN = re.compile(r"[\u0590-\u08ff\ufb50-\ufdff\ufe70-\ufeff]")
+PERSIAN_TEXT_PATTERN = re.compile(r"[\u067e\u0686\u0698\u06af\u06cc]")
 PDF_CONVERSION_TIMEOUT_SECONDS = 60
 PDF_CONVERSION_PER_FILE_TIMEOUT_SECONDS = 15
 FONT_CACHE_TIMEOUT_SECONDS = 30
 FONT_MATCH_TIMEOUT_SECONDS = 15
 EMU_PER_POINT = 12700
 TWIPS_PER_POINT = 20
+<<<<<<< HEAD
 TEXT_MEASUREMENT_SCALE = 4
 TEXT_RENDERING_CENTER_CORRECTION_POINTS = -1.0
 BACKGROUND_BOX_DETECTION_PADDING_POINTS = 20
+=======
+MIN_FAST_PDF_FONT_SIZE = 4
+CERTIFICATE_TEXT_COLOR = "FFFFFF"
+FAST_PDF_TEXT_IMAGE_SCALE = 4
+>>>>>>> 6b57a00 (fix)
 
 XML_NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -68,6 +82,9 @@ def generate_certificates(
     output_path = Path(output_dir)
     template = Path(template_path)
     font = Path(font_path)
+
+    if not placeholder:
+        raise CertificateGenerationError("Placeholder cannot be empty.")
 
     _require_file(names_path, "names file")
     _require_file(template, "certificate template")
@@ -268,8 +285,6 @@ def _generate_fast_pdf_certificates(
     font_path: Path,
     template: FastPdfTemplate,
 ) -> list[Path]:
-    from arabic_reshaper import reshape
-    from bidi.algorithm import get_display
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -291,7 +306,6 @@ def _generate_fast_pdf_certificates(
             pdf_name = _unique_pdf_name(name, used_pdf_names, output_path)
             final_pdf = output_path / pdf_name
             temporary_pdf = work_dir / pdf_name
-            shaped_name = get_display(reshape(name))
 
             _write_fast_pdf(
                 output_pdf=temporary_pdf,
@@ -299,7 +313,8 @@ def _generate_fast_pdf_certificates(
                 template=template,
                 font_path=font_path,
                 font_name=font_name,
-                text=shaped_name,
+                font_path=font_path,
+                text=name,
                 pdfmetrics=pdfmetrics,
                 canvas_module=canvas,
             )
@@ -318,6 +333,7 @@ def _write_fast_pdf(
     template: FastPdfTemplate,
     font_path: Path,
     font_name: str,
+    font_path: Path | None,
     text: str,
     pdfmetrics,
     canvas_module,
@@ -337,14 +353,18 @@ def _write_fast_pdf(
     content_x = template.textbox_x + template.inset_left
     content_width = template.textbox_width - template.inset_left - template.inset_right
     content_height = template.textbox_height - template.inset_top - template.inset_bottom
+<<<<<<< HEAD
     font_size = _fit_text_size(text, font_name, template.font_size, content_width, pdfmetrics)
 
+=======
+>>>>>>> 6b57a00 (fix)
     content_bottom = (
         template.page_height
         - template.textbox_y
         - template.textbox_height
         + template.inset_bottom
     )
+<<<<<<< HEAD
     baseline_y = _centered_text_baseline_y(
         content_bottom=content_bottom,
         content_height=content_height,
@@ -354,13 +374,54 @@ def _write_fast_pdf(
         font_name=font_name,
         pdfmetrics=pdfmetrics,
     )
+=======
+
+    if font_path is not None and _contains_rtl_text(text):
+        text_image = _render_fast_pdf_text_image(
+            text=text,
+            font_path=font_path,
+            font_size=template.font_size,
+            max_width=content_width,
+            max_height=content_height,
+        )
+        if text_image is not None:
+            from reportlab.lib.utils import ImageReader
+
+            pdf.drawImage(
+                ImageReader(BytesIO(text_image)),
+                content_x,
+                content_bottom,
+                width=content_width,
+                height=content_height,
+                preserveAspectRatio=False,
+                mask="auto",
+            )
+            pdf.showPage()
+            pdf.save()
+            return
+
+    display_text = _fast_pdf_display_text(text)
+    font_size = _fit_text_size(
+        display_text,
+        font_name,
+        template.font_size,
+        content_width,
+        pdfmetrics,
+    )
+
+    ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
+    text_height = ascent - descent
+    baseline_y = content_bottom + ((content_height - text_height) / 2) - descent
+>>>>>>> 6b57a00 (fix)
 
     pdf.setFont(font_name, font_size)
-    pdf.drawCentredString(content_x + (content_width / 2), baseline_y, text)
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.drawCentredString(content_x + (content_width / 2), baseline_y, display_text)
     pdf.showPage()
     pdf.save()
 
 
+<<<<<<< HEAD
 def _centered_text_baseline_y(
     content_bottom: float,
     content_height: float,
@@ -399,6 +460,113 @@ def _text_baseline_offset_from_center(
     except Exception:
         ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
         return -((ascent + descent) / 2)
+=======
+def _render_fast_pdf_text_image(
+    text: str,
+    font_path: Path,
+    font_size: float,
+    max_width: float,
+    max_height: float,
+) -> bytes | None:
+    if max_width <= 0 or max_height <= 0 or not text:
+        return None
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont, features
+    except ImportError:
+        return None
+
+    if not features.check("raqm"):
+        return None
+
+    scale = FAST_PDF_TEXT_IMAGE_SCALE
+    image_width = max(1, int(round(max_width * scale)))
+    image_height = max(1, int(round(max_height * scale)))
+    language = _rtl_text_language(text)
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe)
+
+    fitted_font = None
+    fitted_bbox = None
+    fitted_size = font_size
+    while fitted_size > 1:
+        font = _load_pillow_font(ImageFont, font_path, fitted_size * scale)
+        bbox = probe_draw.textbbox(
+            (0, 0),
+            text,
+            font=font,
+            direction="rtl",
+            language=language,
+        )
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        if text_width <= image_width and text_height <= image_height:
+            fitted_font = font
+            fitted_bbox = bbox
+            break
+        fitted_size -= 1
+
+    if fitted_font is None or fitted_bbox is None:
+        font = _load_pillow_font(ImageFont, font_path, scale)
+        bbox = probe_draw.textbbox(
+            (0, 0),
+            text,
+            font=font,
+            direction="rtl",
+            language=language,
+        )
+        fitted_font = font
+        fitted_bbox = bbox
+
+    text_image = Image.new("RGBA", (image_width, image_height), (0, 0, 0, 0))
+    text_draw = ImageDraw.Draw(text_image)
+    text_width = fitted_bbox[2] - fitted_bbox[0]
+    text_height = fitted_bbox[3] - fitted_bbox[1]
+    text_x = ((image_width - text_width) / 2) - fitted_bbox[0]
+    text_y = ((image_height - text_height) / 2) - fitted_bbox[1]
+    text_draw.text(
+        (text_x, text_y),
+        text,
+        font=fitted_font,
+        fill=(255, 255, 255, 255),
+        direction="rtl",
+        language=language,
+    )
+
+    output = BytesIO()
+    text_image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _load_pillow_font(ImageFont, font_path: Path, scaled_font_size: float):
+    layout_engine = getattr(getattr(ImageFont, "Layout", None), "RAQM", None)
+    kwargs = {"layout_engine": layout_engine} if layout_engine is not None else {}
+    return ImageFont.truetype(
+        str(font_path),
+        max(1, int(round(scaled_font_size))),
+        **kwargs,
+    )
+
+
+def _fast_pdf_display_text(text: str) -> str:
+    if not _contains_rtl_text(text):
+        return text
+
+    from arabic_reshaper import reshape
+    from bidi.algorithm import get_display
+
+    return get_display(reshape(text))
+
+
+def _contains_rtl_text(text: str) -> bool:
+    return RTL_TEXT_PATTERN.search(text) is not None
+
+
+def _rtl_text_language(text: str) -> str:
+    if PERSIAN_TEXT_PATTERN.search(text):
+        return "fa-IR"
+    return "ar-SA"
+>>>>>>> 6b57a00 (fix)
 
 
 def _fit_text_size(
@@ -408,8 +576,19 @@ def _fit_text_size(
     max_width: float,
     pdfmetrics,
 ) -> float:
-    while font_size > 12 and pdfmetrics.stringWidth(text, font_name, font_size) > max_width:
+    if max_width <= 0 or not text:
+        return font_size
+
+    while (
+        font_size > MIN_FAST_PDF_FONT_SIZE
+        and pdfmetrics.stringWidth(text, font_name, font_size) > max_width
+    ):
         font_size -= 1
+
+    width = pdfmetrics.stringWidth(text, font_name, font_size)
+    if width > max_width and width > 0:
+        return max(1, font_size * (max_width / width))
+
     return font_size
 
 
@@ -424,7 +603,12 @@ def _load_fast_pdf_template(template_path: Path, placeholder: str) -> FastPdfTem
 
             page_width, page_height = _read_page_size(document_root)
             margin_left, margin_top = _read_page_margins(document_root)
-            background_image = _read_background_image(archive, document_root)
+            background_image = _read_background_image(
+                archive,
+                document_root,
+                page_width,
+                page_height,
+            )
             if background_image is None:
                 return None
 
@@ -452,10 +636,14 @@ def _load_fast_pdf_template(template_path: Path, placeholder: str) -> FastPdfTem
                 textbox_x, textbox_y, textbox_width, textbox_height = visual_textbox
             inset_left, inset_top, inset_right, inset_bottom = _read_textbox_insets(text_anchor)
             font_size = _read_placeholder_font_size(text_anchor, placeholder)
-    except (KeyError, ElementTree.ParseError, zipfile.BadZipFile):
+    except (KeyError, ValueError, ElementTree.ParseError, zipfile.BadZipFile):
         return None
 
     if textbox_width <= 0 or textbox_height <= 0:
+        return None
+    if textbox_width - inset_left - inset_right <= 0:
+        return None
+    if textbox_height - inset_top - inset_bottom <= 0:
         return None
 
     return FastPdfTemplate(
@@ -476,7 +664,7 @@ def _load_fast_pdf_template(template_path: Path, placeholder: str) -> FastPdfTem
 
 def _find_placeholder_anchor(document_root: ElementTree.Element, placeholder: str):
     for anchor in document_root.findall(".//wp:anchor", XML_NAMESPACES):
-        if placeholder in "".join(anchor.itertext()):
+        if placeholder in _visible_word_text(anchor):
             return anchor
     return None
 
@@ -574,6 +762,8 @@ def _read_page_margins(document_root: ElementTree.Element) -> tuple[float, float
 def _read_background_image(
     archive: zipfile.ZipFile,
     document_root: ElementTree.Element,
+    page_width: float,
+    page_height: float,
 ) -> bytes | None:
     section = document_root.find(".//w:sectPr", XML_NAMESPACES)
     if section is not None:
@@ -588,11 +778,102 @@ def _read_background_image(
             if header_path:
                 image_path = _header_background_image_path(archive, header_path)
                 if image_path:
-                    return archive.read(image_path)
+                    image = _read_full_page_image(
+                        archive,
+                        image_path,
+                        page_width,
+                        page_height,
+                    )
+                    if image is not None:
+                        return image
 
-    for name in archive.namelist():
-        if name.startswith("word/media/") and name.lower().endswith((".png", ".jpg", ".jpeg")):
-            return archive.read(name)
+    media_images = [
+        name
+        for name in archive.namelist()
+        if name.startswith("word/media/") and name.lower().endswith((".png", ".jpg", ".jpeg"))
+    ]
+    if len(media_images) == 1:
+        return _read_full_page_image(archive, media_images[0], page_width, page_height)
+    return None
+
+
+def _read_full_page_image(
+    archive: zipfile.ZipFile,
+    image_path: str,
+    page_width: float,
+    page_height: float,
+) -> bytes | None:
+    image = archive.read(image_path)
+    if _image_matches_page(image, page_width, page_height):
+        return image
+    return None
+
+
+def _image_matches_page(image: bytes, page_width: float, page_height: float) -> bool:
+    dimensions = _image_dimensions(image)
+    if dimensions is None:
+        return False
+    width, height = dimensions
+    if min(width, height) < 300 or page_width <= 0 or page_height <= 0:
+        return False
+    image_ratio = width / height
+    page_ratio = page_width / page_height
+    return abs(image_ratio - page_ratio) / page_ratio <= 0.05
+
+
+def _image_dimensions(image: bytes) -> tuple[int, int] | None:
+    if image.startswith(b"\x89PNG\r\n\x1a\n") and len(image) >= 24:
+        return int.from_bytes(image[16:20], "big"), int.from_bytes(image[20:24], "big")
+
+    if image.startswith(b"\xff\xd8"):
+        return _jpeg_dimensions(image)
+
+    return None
+
+
+def _jpeg_dimensions(image: bytes) -> tuple[int, int] | None:
+    index = 2
+    sof_markers = {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+
+    while index < len(image):
+        while index < len(image) and image[index] != 0xFF:
+            index += 1
+        while index < len(image) and image[index] == 0xFF:
+            index += 1
+        if index >= len(image):
+            return None
+
+        marker = image[index]
+        index += 1
+        if marker == 0xD9 or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(image):
+            return None
+
+        segment_length = int.from_bytes(image[index : index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(image):
+            return None
+        if marker in sof_markers and segment_length >= 7:
+            height = int.from_bytes(image[index + 3 : index + 5], "big")
+            width = int.from_bytes(image[index + 5 : index + 7], "big")
+            return width, height
+
+        index += segment_length
+
     return None
 
 
@@ -662,12 +943,16 @@ def _read_textbox_insets(anchor: ElementTree.Element) -> tuple[float, float, flo
 
 def _read_placeholder_font_size(anchor: ElementTree.Element, placeholder: str) -> float:
     for paragraph in anchor.findall(".//w:p", XML_NAMESPACES):
-        if placeholder not in "".join(paragraph.itertext()):
+        if placeholder not in _visible_word_text(paragraph):
             continue
         size = paragraph.find(".//w:sz", XML_NAMESPACES)
         if size is not None:
             return int(size.attrib[_w_attr("val")]) / 2
     return 36
+
+
+def _visible_word_text(element: ElementTree.Element) -> str:
+    return "".join(text.text or "" for text in element.findall(".//w:t", XML_NAMESPACES))
 
 
 def _emu_to_points(value: int) -> float:
@@ -693,9 +978,8 @@ def _write_docx_with_name(
     name: str,
     font_family: str | None = None,
 ) -> None:
-    placeholder_xml = escape(placeholder)
-    name_xml = escape(name)
     replaced = False
+    rtl_language = _rtl_text_language(name) if _contains_rtl_text(name) else None
 
     with zipfile.ZipFile(template_path, "r") as source:
         if DOCUMENT_XML not in source.namelist():
@@ -706,50 +990,284 @@ def _write_docx_with_name(
         with zipfile.ZipFile(output_docx_path, "w", zipfile.ZIP_DEFLATED) as target:
             for item in source.infolist():
                 content = source.read(item.filename)
-                if item.filename == DOCUMENT_XML:
+                if _is_word_text_part(item.filename):
                     document_xml = content.decode("utf-8")
-                    if placeholder_xml not in document_xml:
-                        raise CertificateGenerationError(
-                            f"Placeholder text was not found in {DOCUMENT_XML}: "
-                            f"{placeholder}"
-                        )
                     if font_family:
-                        document_xml = _replace_placeholder_font_family(
+                        document_xml = _replace_placeholder_font_style(
                             document_xml,
-                            placeholder_xml,
+                            placeholder,
                             font_family,
+                            rtl_language=rtl_language,
                         )
-                    document_xml = document_xml.replace(placeholder_xml, name_xml)
+                    elif rtl_language:
+                        document_xml = _replace_placeholder_text_direction(
+                            document_xml,
+                            placeholder,
+                            rtl_language,
+                        )
+                    document_xml, part_replaced = _replace_placeholder_text(
+                        document_xml,
+                        placeholder,
+                        name,
+                    )
                     content = document_xml.encode("utf-8")
-                    replaced = True
+                    replaced = replaced or part_replaced
                 target.writestr(item, content)
 
     if not replaced:
         raise CertificateGenerationError(
-            f"Placeholder text was not replaced in {output_docx_path}."
+            "Placeholder text was not found in the Word document content: "
+            f"{placeholder}"
         )
+
+
+def _is_word_text_part(filename: str) -> bool:
+    return WORD_TEXT_PART_PATTERN.match(filename) is not None
+
+
+def _replace_placeholder_text(
+    document_xml: str,
+    placeholder: str,
+    replacement: str,
+) -> tuple[str, bool]:
+    replaced = False
+    found_paragraph = False
+
+    def replace_paragraph(match: re.Match[str]) -> str:
+        nonlocal found_paragraph, replaced
+        found_paragraph = True
+        paragraph, paragraph_replaced = _replace_text_in_word_text_nodes(
+            match.group(0),
+            placeholder,
+            replacement,
+        )
+        replaced = replaced or paragraph_replaced
+        return paragraph
+
+    updated_xml = WORD_PARAGRAPH_PATTERN.sub(replace_paragraph, document_xml)
+    if found_paragraph:
+        return updated_xml, replaced
+
+    return _replace_text_in_word_text_nodes(document_xml, placeholder, replacement)
+
+
+def _replace_text_in_word_text_nodes(
+    xml_fragment: str,
+    placeholder: str,
+    replacement: str,
+) -> tuple[str, bool]:
+    matches = list(WORD_TEXT_PATTERN.finditer(xml_fragment))
+    if not matches:
+        return xml_fragment, False
+
+    text_values = [unescape(match.group(2)) for match in matches]
+    full_text = "".join(text_values)
+    occurrences = _find_text_occurrences(full_text, placeholder)
+    if not occurrences:
+        return xml_fragment, False
+
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for text in text_values:
+        start = cursor
+        cursor += len(text)
+        spans.append((start, cursor))
+
+    for start, end in reversed(occurrences):
+        start_node, start_offset = _text_position_to_node(spans, start)
+        end_node, end_offset = _text_position_to_node(spans, end, prefer_previous=True)
+        if start_node == end_node:
+            text = text_values[start_node]
+            text_values[start_node] = text[:start_offset] + replacement + text[end_offset:]
+            continue
+
+        text_values[start_node] = text_values[start_node][:start_offset] + replacement
+        for node_index in range(start_node + 1, end_node):
+            text_values[node_index] = ""
+        text_values[end_node] = text_values[end_node][end_offset:]
+
+    parts: list[str] = []
+    last_index = 0
+    for match, text in zip(matches, text_values):
+        parts.append(xml_fragment[last_index : match.start(2)])
+        parts.append(escape(text))
+        last_index = match.end(2)
+    parts.append(xml_fragment[last_index:])
+
+    return "".join(parts), True
+
+
+def _find_text_occurrences(text: str, needle: str) -> list[tuple[int, int]]:
+    occurrences: list[tuple[int, int]] = []
+    if not needle:
+        return occurrences
+
+    start = 0
+    while True:
+        index = text.find(needle, start)
+        if index == -1:
+            return occurrences
+        end = index + len(needle)
+        occurrences.append((index, end))
+        start = end
+
+
+def _text_position_to_node(
+    spans: list[tuple[int, int]],
+    position: int,
+    prefer_previous: bool = False,
+) -> tuple[int, int]:
+    for index, (start, end) in enumerate(spans):
+        if start <= position < end:
+            return index, position - start
+        if prefer_previous and start < end and position == end:
+            return index, end - start
+
+    if position == 0 and spans:
+        return 0, 0
+    raise ValueError(f"Text position {position} does not map to a Word text node.")
+
+
+def _replace_placeholder_font_style(
+    document_xml: str,
+    placeholder: str,
+    font_family: str,
+    font_color: str = CERTIFICATE_TEXT_COLOR,
+    rtl_language: str | None = None,
+) -> str:
+    font_attr = escape(font_family, {'"': "&quot;"})
+    color_attr = escape(font_color, {'"': "&quot;"})
+
+    def replace_paragraph(match: re.Match[str]) -> str:
+        paragraph = match.group(0)
+        if not _word_fragment_contains_text(paragraph, placeholder):
+            return paragraph
+        if rtl_language:
+            paragraph = _ensure_paragraph_bidi(paragraph)
+        return _replace_run_style_tags(paragraph, font_attr, color_attr, rtl_language)
+
+    return WORD_PARAGRAPH_PATTERN.sub(replace_paragraph, document_xml)
+
+
+def _replace_placeholder_text_direction(
+    document_xml: str,
+    placeholder: str,
+    rtl_language: str,
+) -> str:
+    def replace_paragraph(match: re.Match[str]) -> str:
+        paragraph = match.group(0)
+        if not _word_fragment_contains_text(paragraph, placeholder):
+            return paragraph
+        paragraph = _ensure_paragraph_bidi(paragraph)
+        return _replace_run_style_tags(
+            paragraph,
+            font_attr=None,
+            color_attr=None,
+            rtl_language=rtl_language,
+        )
+
+    return WORD_PARAGRAPH_PATTERN.sub(replace_paragraph, document_xml)
 
 
 def _replace_placeholder_font_family(
     document_xml: str,
-    placeholder_xml: str,
+    placeholder: str,
     font_family: str,
 ) -> str:
-    font_attr = escape(font_family, {'"': "&quot;"})
+    return _replace_placeholder_font_style(document_xml, placeholder, font_family)
 
-    def replace_paragraph(match: re.Match[str]) -> str:
-        paragraph = match.group(0)
-        if placeholder_xml not in paragraph:
-            return paragraph
-        return _replace_rfonts_tags(paragraph, font_attr)
 
-    return re.sub(r"<w:p\b.*?</w:p>", replace_paragraph, document_xml, flags=re.DOTALL)
+def _word_fragment_contains_text(xml_fragment: str, text: str) -> bool:
+    return text in "".join(
+        unescape(match.group(2)) for match in WORD_TEXT_PATTERN.finditer(xml_fragment)
+    )
+
+
+def _replace_run_style_tags(
+    xml_fragment: str,
+    font_attr: str | None,
+    color_attr: str | None,
+    rtl_language: str | None = None,
+) -> str:
+    def replace_run(match: re.Match[str]) -> str:
+        run = match.group(0)
+        if "<w:t" not in run:
+            return run
+        if font_attr is not None:
+            if "<w:rFonts" in run:
+                run = _replace_existing_rfonts(run, font_attr)
+            else:
+                run = _insert_rfonts_tag(run, font_attr)
+        if color_attr is not None:
+            if "<w:color" in run:
+                run = _replace_existing_color(run, color_attr)
+            else:
+                run = _insert_color_tag(run, color_attr)
+        if rtl_language:
+            run = _ensure_run_rtl(run, rtl_language)
+        return run
+
+    return WORD_RUN_PATTERN.sub(replace_run, xml_fragment)
+
+
+def _ensure_paragraph_bidi(xml_fragment: str) -> str:
+    empty_paragraph_properties = re.search(r"<w:pPr\b([^>]*)/>", xml_fragment)
+    if empty_paragraph_properties is not None:
+        attributes = empty_paragraph_properties.group(1).rstrip()
+        return (
+            xml_fragment[: empty_paragraph_properties.start()]
+            + f"<w:pPr{attributes}><w:bidi/></w:pPr>"
+            + xml_fragment[empty_paragraph_properties.end() :]
+        )
+
+    paragraph_properties = re.search(r"<w:pPr\b[^>]*>", xml_fragment)
+    if paragraph_properties is not None:
+        properties_end = xml_fragment.find("</w:pPr>", paragraph_properties.end())
+        if properties_end == -1:
+            return xml_fragment
+        properties_xml = xml_fragment[paragraph_properties.end() : properties_end]
+        if "<w:bidi" in properties_xml:
+            return xml_fragment
+        return (
+            xml_fragment[: paragraph_properties.end()]
+            + "<w:bidi/>"
+            + xml_fragment[paragraph_properties.end() :]
+        )
+
+    paragraph = re.match(r"<w:p\b[^>]*>", xml_fragment)
+    if paragraph is None:
+        return xml_fragment
+    return (
+        xml_fragment[: paragraph.end()]
+        + "<w:pPr><w:bidi/></w:pPr>"
+        + xml_fragment[paragraph.end() :]
+    )
+
+
+def _ensure_run_rtl(xml_fragment: str, rtl_language: str) -> str:
+    if "<w:rtl" not in xml_fragment:
+        xml_fragment = _insert_run_property_tag(xml_fragment, "<w:rtl/>")
+    if "<w:lang" in xml_fragment:
+        return _replace_existing_language(xml_fragment, rtl_language)
+    return _insert_run_property_tag(xml_fragment, _language_tag(rtl_language))
 
 
 def _replace_rfonts_tags(xml_fragment: str, font_attr: str) -> str:
+    def replace_run(match: re.Match[str]) -> str:
+        run = match.group(0)
+        if "<w:t" not in run:
+            return run
+        if "<w:rFonts" in run:
+            return _replace_existing_rfonts(run, font_attr)
+        return _insert_rfonts_tag(run, font_attr)
+
+    return WORD_RUN_PATTERN.sub(replace_run, xml_fragment)
+
+
+def _replace_existing_rfonts(xml_fragment: str, font_attr: str) -> str:
     def replace_rfonts(match: re.Match[str]) -> str:
         tag = match.group(0)
-        for attr_name in ("ascii", "hAnsi", "cs"):
+        for attr_name in ("ascii", "hAnsi", "cs", "eastAsia"):
             qualified_attr = f"w:{attr_name}"
             if f"{qualified_attr}=" in tag:
                 tag = re.sub(
@@ -763,6 +1281,92 @@ def _replace_rfonts_tags(xml_fragment: str, font_attr: str) -> str:
         return tag
 
     return re.sub(r"<w:rFonts\b[^>]*/?>", replace_rfonts, xml_fragment)
+
+
+def _replace_existing_color(xml_fragment: str, color_attr: str) -> str:
+    def replace_color(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if "w:val=" in tag:
+            return re.sub(
+                r'(w:val=")[^"]*(")',
+                lambda attr_match: f"{attr_match.group(1)}{color_attr}{attr_match.group(2)}",
+                tag,
+                count=1,
+            )
+        insert_at = -2 if tag.endswith("/>") else -1
+        return f'{tag[:insert_at]} w:val="{color_attr}"{tag[insert_at:]}'
+
+    return re.sub(r"<w:color\b[^>]*/?>", replace_color, xml_fragment)
+
+
+def _replace_existing_language(xml_fragment: str, rtl_language: str) -> str:
+    language_attr = escape(rtl_language, {'"': "&quot;"})
+
+    def replace_language(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if "w:bidi=" in tag:
+            return re.sub(
+                r'(w:bidi=")[^"]*(")',
+                lambda attr_match: f"{attr_match.group(1)}{language_attr}{attr_match.group(2)}",
+                tag,
+                count=1,
+            )
+        insert_at = -2 if tag.endswith("/>") else -1
+        return f'{tag[:insert_at]} w:bidi="{language_attr}"{tag[insert_at:]}'
+
+    return re.sub(r"<w:lang\b[^>]*/?>", replace_language, xml_fragment)
+
+
+def _insert_rfonts_tag(xml_fragment: str, font_attr: str) -> str:
+    return _insert_run_property_tag(xml_fragment, _rfonts_tag(font_attr))
+
+
+def _insert_color_tag(xml_fragment: str, color_attr: str) -> str:
+    return _insert_run_property_tag(xml_fragment, _color_tag(color_attr))
+
+
+def _insert_run_property_tag(xml_fragment: str, property_tag: str) -> str:
+    empty_run_properties = re.search(r"<w:rPr\b([^>]*)/>", xml_fragment)
+    if empty_run_properties is not None:
+        attributes = empty_run_properties.group(1).rstrip()
+        return (
+            xml_fragment[: empty_run_properties.start()]
+            + f"<w:rPr{attributes}>{property_tag}</w:rPr>"
+            + xml_fragment[empty_run_properties.end() :]
+        )
+
+    run_properties = re.search(r"<w:rPr\b[^>]*>", xml_fragment)
+    if run_properties is not None:
+        return (
+            xml_fragment[: run_properties.end()]
+            + property_tag
+            + xml_fragment[run_properties.end() :]
+        )
+
+    run = re.match(r"<w:r\b[^>]*>", xml_fragment)
+    if run is None:
+        return xml_fragment
+    return (
+        xml_fragment[: run.end()]
+        + f"<w:rPr>{property_tag}</w:rPr>"
+        + xml_fragment[run.end() :]
+    )
+
+
+def _rfonts_tag(font_attr: str) -> str:
+    return (
+        f'<w:rFonts w:ascii="{font_attr}" w:hAnsi="{font_attr}" '
+        f'w:cs="{font_attr}" w:eastAsia="{font_attr}"/>'
+    )
+
+
+def _color_tag(color_attr: str) -> str:
+    return f'<w:color w:val="{color_attr}"/>'
+
+
+def _language_tag(rtl_language: str) -> str:
+    language_attr = escape(rtl_language, {'"': "&quot;"})
+    return f'<w:lang w:bidi="{language_attr}"/>'
 
 
 def _convert_docx_to_pdf(

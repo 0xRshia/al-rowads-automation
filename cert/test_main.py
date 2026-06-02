@@ -13,6 +13,7 @@ import zipfile
 from http.cookiejar import CookieJar
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 import uvicorn
 
@@ -70,6 +71,56 @@ class CertificateGeneratorTests(unittest.TestCase):
             self.assertIn("Ali &amp; Reza", document_xml)
             self.assertNotIn("PLACEHOLDER", document_xml)
 
+    def test_write_docx_with_name_replaces_split_placeholder_runs(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_dir = Path(temporary_directory)
+            template = work_dir / "template.docx"
+            output = work_dir / "output.docx"
+            document_xml = (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:body><w:p>'
+                "<w:r><w:t>PLACE</w:t></w:r>"
+                "<w:r><w:t>HOLDER</w:t></w:r>"
+                "</w:p></w:body></w:document>"
+            )
+
+            with zipfile.ZipFile(template, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(certificates.DOCUMENT_XML, document_xml)
+
+            certificates._write_docx_with_name(template, output, "PLACEHOLDER", "Ali & Reza")
+
+            with zipfile.ZipFile(output) as archive:
+                updated_xml = archive.read(certificates.DOCUMENT_XML).decode("utf-8")
+
+            self.assertIn("Ali &amp; Reza", updated_xml)
+            self.assertNotIn("PLACEHOLDER", updated_xml)
+
+    def test_write_docx_with_name_replaces_header_placeholder(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_dir = Path(temporary_directory)
+            template = work_dir / "template.docx"
+            output = work_dir / "output.docx"
+            document_xml = (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                "<w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p></w:body></w:document>"
+            )
+            header_xml = (
+                '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                "<w:p><w:r><w:t>PLACEHOLDER</w:t></w:r></w:p></w:hdr>"
+            )
+
+            with zipfile.ZipFile(template, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(certificates.DOCUMENT_XML, document_xml)
+                archive.writestr("word/header1.xml", header_xml)
+
+            certificates._write_docx_with_name(template, output, "PLACEHOLDER", "Ali")
+
+            with zipfile.ZipFile(output) as archive:
+                updated_header = archive.read("word/header1.xml").decode("utf-8")
+
+            self.assertIn("Ali", updated_header)
+            self.assertNotIn("PLACEHOLDER", updated_header)
+
     def test_write_docx_with_name_updates_placeholder_font_family(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             work_dir = Path(temporary_directory)
@@ -78,8 +129,8 @@ class CertificateGeneratorTests(unittest.TestCase):
             document_xml = (
                 '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
                 '<w:body>'
-                '<w:p><w:r><w:rPr><w:rFonts w:ascii="Other Font" w:hAnsi="Other Font" w:cs="Other Font"/></w:rPr><w:t>UNCHANGED</w:t></w:r></w:p>'
-                '<w:p><w:r><w:rPr><w:rFonts w:ascii="Abar High" w:hAnsi="Abar High" w:cs="Abar High"/></w:rPr><w:t>PLACEHOLDER</w:t></w:r></w:p>'
+                '<w:p><w:r><w:rPr><w:rFonts w:ascii="Other Font" w:hAnsi="Other Font" w:cs="Other Font"/><w:color w:val="112233"/></w:rPr><w:t>UNCHANGED</w:t></w:r></w:p>'
+                '<w:p><w:r><w:rPr><w:rFonts w:ascii="Abar High" w:hAnsi="Abar High" w:cs="Abar High"/><w:color w:val="000000"/></w:rPr><w:t>PLACEHOLDER</w:t></w:r></w:p>'
                 "</w:body></w:document>"
             )
 
@@ -100,8 +151,246 @@ class CertificateGeneratorTests(unittest.TestCase):
             self.assertIn('w:ascii="Uploaded Font"', updated_xml)
             self.assertIn('w:hAnsi="Uploaded Font"', updated_xml)
             self.assertIn('w:cs="Uploaded Font"', updated_xml)
+            self.assertIn('w:eastAsia="Uploaded Font"', updated_xml)
+            self.assertIn('w:color w:val="FFFFFF"', updated_xml)
             self.assertIn('w:ascii="Other Font"', updated_xml)
+            self.assertIn('w:color w:val="112233"', updated_xml)
             self.assertNotIn("Abar High", updated_xml)
+            self.assertNotIn('w:color w:val="000000"', updated_xml)
+
+    def test_write_docx_with_name_inserts_missing_placeholder_font_family(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_dir = Path(temporary_directory)
+            template = work_dir / "template.docx"
+            output = work_dir / "output.docx"
+            document_xml = (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:body><w:p><w:r><w:t>PLACEHOLDER</w:t></w:r></w:p></w:body></w:document>'
+            )
+
+            with zipfile.ZipFile(template, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(certificates.DOCUMENT_XML, document_xml)
+
+            certificates._write_docx_with_name(
+                template,
+                output,
+                "PLACEHOLDER",
+                "Ali",
+                "Uploaded Font",
+            )
+
+            with zipfile.ZipFile(output) as archive:
+                updated_xml = archive.read(certificates.DOCUMENT_XML).decode("utf-8")
+
+            self.assertIn("<w:rPr>", updated_xml)
+            self.assertIn("<w:rFonts", updated_xml)
+            self.assertIn('w:ascii="Uploaded Font"', updated_xml)
+            self.assertIn('w:hAnsi="Uploaded Font"', updated_xml)
+            self.assertIn('w:cs="Uploaded Font"', updated_xml)
+            self.assertIn('w:color w:val="FFFFFF"', updated_xml)
+
+    def test_write_docx_with_name_marks_arabic_replacement_as_rtl(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            work_dir = Path(temporary_directory)
+            template = work_dir / "template.docx"
+            output = work_dir / "output.docx"
+            document_xml = (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                '<w:body><w:p><w:r><w:t>PLACEHOLDER</w:t></w:r></w:p></w:body></w:document>'
+            )
+
+            with zipfile.ZipFile(template, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(certificates.DOCUMENT_XML, document_xml)
+
+            certificates._write_docx_with_name(
+                template,
+                output,
+                "PLACEHOLDER",
+                "الأستاذ احمد سعد المحترم",
+            )
+
+            with zipfile.ZipFile(output) as archive:
+                updated_xml = archive.read(certificates.DOCUMENT_XML).decode("utf-8")
+
+            self.assertIn("الأستاذ احمد سعد المحترم", updated_xml)
+            self.assertIn("<w:pPr><w:bidi/></w:pPr>", updated_xml)
+            self.assertIn("<w:rtl/>", updated_xml)
+            self.assertIn('w:lang w:bidi="ar-SA"', updated_xml)
+
+    def test_find_placeholder_anchor_uses_visible_word_text_only(self):
+        document_xml = (
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+            "<w:body><w:p><w:r><w:drawing><wp:anchor>"
+            "<wp:positionH><wp:posOffset>0</wp:posOffset></wp:positionH>"
+            "<w:p><w:r><w:t>VISIBLE</w:t></w:r></w:p>"
+            "</wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"
+        )
+        root = ElementTree.fromstring(document_xml)
+
+        self.assertIsNone(certificates._find_placeholder_anchor(root, "0"))
+        self.assertIsNotNone(certificates._find_placeholder_anchor(root, "VISIBLE"))
+
+    def test_fit_text_size_scales_long_text_to_available_width(self):
+        class Metrics:
+            def stringWidth(self, text, font_name, font_size):
+                del font_name
+                return len(text) * font_size
+
+        font_size = certificates._fit_text_size("A" * 200, "font", 36, 398, Metrics())
+
+        self.assertLess(font_size, 4)
+        self.assertLessEqual(200 * font_size, 398)
+
+    def test_write_fast_pdf_draws_uploaded_font_text_in_white(self):
+        class Metrics:
+            def stringWidth(self, text, font_name, font_size):
+                del text, font_name
+                return font_size
+
+            def getAscentDescent(self, font_name, font_size):
+                del font_name
+                return font_size, 0
+
+        class Canvas:
+            instances = []
+
+            def __init__(self, path, pagesize):
+                del path, pagesize
+                self.calls = []
+                Canvas.instances.append(self)
+
+            def drawImage(self, *args, **kwargs):
+                del args, kwargs
+
+            def setFont(self, font_name, font_size):
+                self.calls.append(("setFont", font_name, font_size))
+
+            def setFillColorRGB(self, red, green, blue):
+                self.calls.append(("setFillColorRGB", red, green, blue))
+
+            def drawCentredString(self, x, y, text):
+                self.calls.append(("drawCentredString", x, y, text))
+
+            def showPage(self):
+                pass
+
+            def save(self):
+                pass
+
+        class CanvasModule:
+            pass
+
+        CanvasModule.Canvas = Canvas
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            certificates._write_fast_pdf(
+                output_pdf=Path(temporary_directory) / "certificate.pdf",
+                image=object(),
+                template=certificates.FastPdfTemplate(
+                    background_image=b"",
+                    page_width=100,
+                    page_height=100,
+                    textbox_x=0,
+                    textbox_y=0,
+                    textbox_width=100,
+                    textbox_height=40,
+                    inset_left=0,
+                    inset_top=0,
+                    inset_right=0,
+                    inset_bottom=0,
+                    font_size=24,
+                ),
+                font_name="Uploaded Font",
+                font_path=None,
+                text="Ali",
+                pdfmetrics=Metrics(),
+                canvas_module=CanvasModule,
+            )
+
+        call_names = [call[0] for call in Canvas.instances[0].calls]
+        self.assertIn(("setFillColorRGB", 1, 1, 1), Canvas.instances[0].calls)
+        self.assertLess(
+            call_names.index("setFillColorRGB"),
+            call_names.index("drawCentredString"),
+        )
+
+    def test_write_fast_pdf_renders_arabic_text_as_image(self):
+        class Metrics:
+            def stringWidth(self, text, font_name, font_size):
+                del text, font_name
+                return font_size
+
+            def getAscentDescent(self, font_name, font_size):
+                del font_name
+                return font_size, 0
+
+        class Canvas:
+            instances = []
+
+            def __init__(self, path, pagesize):
+                del path, pagesize
+                self.calls = []
+                Canvas.instances.append(self)
+
+            def drawImage(self, *args, **kwargs):
+                self.calls.append(("drawImage", args, kwargs))
+
+            def setFont(self, font_name, font_size):
+                self.calls.append(("setFont", font_name, font_size))
+
+            def setFillColorRGB(self, red, green, blue):
+                self.calls.append(("setFillColorRGB", red, green, blue))
+
+            def drawCentredString(self, x, y, text):
+                self.calls.append(("drawCentredString", x, y, text))
+
+            def showPage(self):
+                pass
+
+            def save(self):
+                pass
+
+        class CanvasModule:
+            pass
+
+        CanvasModule.Canvas = Canvas
+
+        with tempfile.TemporaryDirectory() as temporary_directory, patch(
+            "app.services.certificates._render_fast_pdf_text_image",
+            return_value=b"image",
+        ) as render_text_image, patch(
+            "reportlab.lib.utils.ImageReader",
+            side_effect=lambda image: ("image-reader", image),
+        ):
+            certificates._write_fast_pdf(
+                output_pdf=Path(temporary_directory) / "certificate.pdf",
+                image=object(),
+                template=certificates.FastPdfTemplate(
+                    background_image=b"",
+                    page_width=100,
+                    page_height=100,
+                    textbox_x=0,
+                    textbox_y=0,
+                    textbox_width=100,
+                    textbox_height=40,
+                    inset_left=0,
+                    inset_top=0,
+                    inset_right=0,
+                    inset_bottom=0,
+                    font_size=24,
+                ),
+                font_name="Uploaded Font",
+                font_path=Path("font.ttf"),
+                text="الأستاذ احمد",
+                pdfmetrics=Metrics(),
+                canvas_module=CanvasModule,
+            )
+
+        render_text_image.assert_called_once()
+        call_names = [call[0] for call in Canvas.instances[0].calls]
+        self.assertEqual(call_names.count("drawImage"), 2)
+        self.assertNotIn("drawCentredString", call_names)
 
     def test_convert_docx_to_pdf_builds_libreoffice_command(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
