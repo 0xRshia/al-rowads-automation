@@ -30,15 +30,12 @@ FONT_CACHE_TIMEOUT_SECONDS = 30
 FONT_MATCH_TIMEOUT_SECONDS = 15
 EMU_PER_POINT = 12700
 TWIPS_PER_POINT = 20
-<<<<<<< HEAD
 TEXT_MEASUREMENT_SCALE = 4
 TEXT_RENDERING_CENTER_CORRECTION_POINTS = -1.0
 BACKGROUND_BOX_DETECTION_PADDING_POINTS = 20
-=======
 MIN_FAST_PDF_FONT_SIZE = 4
 CERTIFICATE_TEXT_COLOR = "FFFFFF"
 FAST_PDF_TEXT_IMAGE_SCALE = 4
->>>>>>> 6b57a00 (fix)
 
 XML_NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -311,7 +308,6 @@ def _generate_fast_pdf_certificates(
                 output_pdf=temporary_pdf,
                 image=image,
                 template=template,
-                font_path=font_path,
                 font_name=font_name,
                 font_path=font_path,
                 text=name,
@@ -331,7 +327,6 @@ def _write_fast_pdf(
     output_pdf: Path,
     image,
     template: FastPdfTemplate,
-    font_path: Path,
     font_name: str,
     font_path: Path | None,
     text: str,
@@ -353,28 +348,12 @@ def _write_fast_pdf(
     content_x = template.textbox_x + template.inset_left
     content_width = template.textbox_width - template.inset_left - template.inset_right
     content_height = template.textbox_height - template.inset_top - template.inset_bottom
-<<<<<<< HEAD
-    font_size = _fit_text_size(text, font_name, template.font_size, content_width, pdfmetrics)
-
-=======
->>>>>>> 6b57a00 (fix)
     content_bottom = (
         template.page_height
         - template.textbox_y
         - template.textbox_height
         + template.inset_bottom
     )
-<<<<<<< HEAD
-    baseline_y = _centered_text_baseline_y(
-        content_bottom=content_bottom,
-        content_height=content_height,
-        text=text,
-        font_path=font_path,
-        font_size=font_size,
-        font_name=font_name,
-        pdfmetrics=pdfmetrics,
-    )
-=======
 
     if font_path is not None and _contains_rtl_text(text):
         text_image = _render_fast_pdf_text_image(
@@ -408,11 +387,15 @@ def _write_fast_pdf(
         content_width,
         pdfmetrics,
     )
-
-    ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
-    text_height = ascent - descent
-    baseline_y = content_bottom + ((content_height - text_height) / 2) - descent
->>>>>>> 6b57a00 (fix)
+    baseline_y = _centered_text_baseline_y(
+        content_bottom=content_bottom,
+        content_height=content_height,
+        text=display_text,
+        font_path=font_path,
+        font_size=font_size,
+        font_name=font_name,
+        pdfmetrics=pdfmetrics,
+    )
 
     pdf.setFont(font_name, font_size)
     pdf.setFillColorRGB(1, 1, 1)
@@ -421,12 +404,11 @@ def _write_fast_pdf(
     pdf.save()
 
 
-<<<<<<< HEAD
 def _centered_text_baseline_y(
     content_bottom: float,
     content_height: float,
     text: str,
-    font_path: Path,
+    font_path: Path | None,
     font_size: float,
     font_name: str,
     pdfmetrics,
@@ -443,24 +425,28 @@ def _centered_text_baseline_y(
 
 def _text_baseline_offset_from_center(
     text: str,
-    font_path: Path,
+    font_path: Path | None,
     font_size: float,
     font_name: str,
     pdfmetrics,
 ) -> float:
-    try:
-        from PIL import ImageFont
+    if font_path is not None:
+        try:
+            from PIL import ImageFont
 
-        measured_size = max(1, round(font_size * TEXT_MEASUREMENT_SCALE))
-        font = ImageFont.truetype(str(font_path), measured_size)
-        _left, top, _right, bottom = font.getbbox(text, anchor="ls")
-        return (
-            ((top + bottom) / 2) / TEXT_MEASUREMENT_SCALE
-        ) + TEXT_RENDERING_CENTER_CORRECTION_POINTS
-    except Exception:
-        ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
-        return -((ascent + descent) / 2)
-=======
+            measured_size = max(1, round(font_size * TEXT_MEASUREMENT_SCALE))
+            font = ImageFont.truetype(str(font_path), measured_size)
+            _left, top, _right, bottom = font.getbbox(text, anchor="ls")
+            return (
+                ((top + bottom) / 2) / TEXT_MEASUREMENT_SCALE
+            ) + TEXT_RENDERING_CENTER_CORRECTION_POINTS
+        except Exception:
+            pass
+
+    ascent, descent = pdfmetrics.getAscentDescent(font_name, font_size)
+    return -((ascent + descent) / 2)
+
+
 def _render_fast_pdf_text_image(
     text: str,
     font_path: Path,
@@ -566,7 +552,6 @@ def _rtl_text_language(text: str) -> str:
     if PERSIAN_TEXT_PATTERN.search(text):
         return "fa-IR"
     return "ar-SA"
->>>>>>> 6b57a00 (fix)
 
 
 def _fit_text_size(
